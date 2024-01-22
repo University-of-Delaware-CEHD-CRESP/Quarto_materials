@@ -1,0 +1,77 @@
+---
+title: "Example of Quarto Report"         # Set the title and author
+author: "SVH"
+format: juniper-html                      # Select the output format
+code-fold: true
+code-summary: "Show the code"   
+params:                                   
+  year: 2023
+  district: Cape Henlopen School District 
+---
+
+## Report on Enrollments of Special Demographic Groups in `r params$district`.
+
+This folded code section shows the libraries that are needed and the code for importing data. 
+
+```{r}
+#| message: false
+#| echo: true
+#| warning: false
+#| code-fold: true
+
+library(tidyverse)
+library(scales)
+library(gt)
+library(RSocrata)
+enrollment <- RSocrata::read.socrata("https://data.delaware.gov//api//odata//v4//6i7v-xnmf")
+#Fix an issue in which a school changed its name
+enrollment <- enrollment |> mutate(district = ifelse(districtcode==74, "Campus Community School", district))
+enrollment <- enrollment |> filter(! specialdemo  %in% c("Non-EL Students", "Non-Homeless", "Non-Foster Care", "Gap Group (Hisp,AfAm,AmInd,SWD,ELL,LI)", "Non-SWD", "Military Connected Youth", "Non Low-Income"))
+```
+
+This report only consists of two tables, and uses data from Delaware Open Data.
+
+```{r}
+
+#| echo: false
+#| warning: false
+#| message: false
+
+
+district_enrollment <- enrollment |> filter(schoolcode == 0 & district == params$district & grade=="All Students" & geography=="All Students" & specialdemo!="All Students"  & gender=="All Students" & race =="All Students")
+district_enrollment |> 
+  rename(Year = schoolyear) |> 
+  select(Year, specialdemo, students) |> 
+  group_by(specialdemo, Year) |> 
+  pivot_wider(names_from = Year, names_prefix = "specialdemo_", values_from = students) |> 
+  ungroup() |> 
+  gt() |> 
+  tab_header(paste0("Trend in Enrollment for Special Demographic Groups in ", params$district)) |> 
+  fmt_number(columns = starts_with("specialdemo_"), decimals = 0) |> 
+  cols_label(specialdemo = "Demographic Group",
+             specialdemo_2015 = "2015",
+             specialdemo_2023 = "2023") |> 
+  cols_nanoplot(
+    columns = starts_with("specialdemo_"),
+    new_col_name = "trend",
+    new_col_label = "Trend for 2015-2023"
+  ) |> 
+  cols_hide(columns = matches("2016|2017|2018|2018|2019|2020|2021|2022")) 
+
+state_enrollment_special <- enrollment |> filter(schoolcode == 0 & district == "State of Delaware" & grade=="All Students" & geography=="All Students" & specialdemo != "All Students"  & gender=="All Students" & race =="All Students")
+state_enrollment_special_growth <- state_enrollment_special |>   filter(schoolyear == 2015 | schoolyear == 2023) |> arrange(specialdemo, schoolyear) |> group_by(specialdemo) |> mutate(count=n()) |> ungroup() |> filter(count==2) |> group_by(specialdemo) |> mutate(Percentage_change_state = formattable::percent((students-lag(students))/lag(students))) |> ungroup()  |> filter(!is.na(Percentage_change_state)) |> select(specialdemo, Percentage_change_state)
+
+district_enrollment_special <- enrollment |> filter(schoolcode == 0 & district == params$district & grade=="All Students" & geography=="All Students" & specialdemo != "All Students"  & gender=="All Students" & race =="All Students")
+district_enrollment_special_growth <- district_enrollment_special |>   filter(schoolyear == 2015 | schoolyear == params$year) |> arrange(specialdemo, schoolyear) |> group_by(specialdemo) |> mutate(count=n()) |> ungroup() |> filter(count==2) |> group_by(specialdemo) |> mutate(Percentage_change = formattable::percent((students-lag(students))/lag(students))) |> ungroup()  |> filter(!is.na(Percentage_change))
+
+district_special_enrollment_growth_gt <- district_enrollment_special_growth |> select(district, specialdemo, Percentage_change) |> 
+  inner_join(state_enrollment_special_growth, by = "specialdemo")|> 
+  gt()
+
+district_special_enrollment_growth_gt |> 
+  cols_label(district = "School District",
+             specialdemo = "Demographic Group",
+             Percentage_change = md("% Change in **District**"),
+             Percentage_change_state = "% Change in State") |> 
+tab_header(title = paste0("Percent change in EoY Enrollment from 2015 until ", params$year))
+```
